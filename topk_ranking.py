@@ -10,6 +10,7 @@ class Ranking:
     Store rankings in SortedList using tuple of -score and entityId
     This keeps rankings sorted based on highest score
     Keep dictionary of entityId with score - this will be used to remove the tuple in rankings
+    SortedList documentation: https://grantjenks.com/docs/sortedcontainers/sortedlist.html#sortedcontainers.SortedList
     Update: Time Complexity: O(logN)
     TopK: Time Complexity: O(logNK)
     Remove: Time Complexity: O(logN)
