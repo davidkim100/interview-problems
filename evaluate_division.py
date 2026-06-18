@@ -56,17 +56,50 @@ def calculate_equation(equations: List[List[str]], values: List[float], queries:
         result.append(dfs(x,y, 1, set()))
     return result
 
+from collections import deque
+def calculate_equation_bfs(equations: List[List[str]], values: List[float], queries: List[List[str]]) -> List[float]:
+    graph: Iterable[Iterable[str]] = defaultdict(dict)
+
+    for (x,y),value in zip(equations, values, strict=True):
+        graph[x][y] = value
+        graph[y][x] = 1/value
+
+    def bfs(start: str, end: str, visited: set):
+        if graph[start] == {} and graph[end] == {}:
+            return -1.0
+        
+        queue = deque([(start,1)])
+        visited = set([start])
+        while queue:
+            node, product = queue.popleft()
+            if node == end:
+                return product
+            for neighbor in graph[node]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor,graph[node][neighbor]*product))
+        return -1.0
+    
+    result = []
+    for query in queries:
+        x,y = query
+        result.append(bfs(x, y, set()))
+    return result
+
 if __name__=="__main__":
     EQUATIONS1 = [["a","b"],["b","c"]]
     VALUES1 = [2.0,3.0]
     QUERIES1 = [["a","c"],["b","a"],["a","e"],["a","a"],["x","x"]]
     assert calculate_equation(EQUATIONS1,VALUES1,QUERIES1)==[6.0,0.5,-1.0,1.0,-1.0]
+    assert calculate_equation_bfs(EQUATIONS1,VALUES1,QUERIES1)==[6.0,0.5,-1.0,1.0,-1.0]
     EQUATIONS2 = [["a","b"],["b","c"],["bc","cd"]]
     VALUES2 = [1.5,2.5,5.0]
     QUERIES2 = [["a","c"],["c","b"],["bc","cd"],["cd","bc"]]
     assert calculate_equation(EQUATIONS2,VALUES2,QUERIES2)==[3.75,0.4,5.0,0.2]
+    assert calculate_equation_bfs(EQUATIONS2,VALUES2,QUERIES2)==[3.75,0.4,5.0,0.2]
     EQUATIONS3 = [["a","b"]]
     VALUES3 = [0.5]
     QUERIES3 = [["a","b"],["b","a"],["a","c"],["x","y"]]
     assert calculate_equation(EQUATIONS3,VALUES3,QUERIES3)==[0.50000,2.00000,-1.00000,-1.00000]
+    assert calculate_equation_bfs(EQUATIONS3,VALUES3,QUERIES3)==[0.50000,2.00000,-1.00000,-1.00000]
     print("success")
