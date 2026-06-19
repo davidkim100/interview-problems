@@ -1,0 +1,5 @@
+id,name,depends_on
+t1,Provision database,
+t2,Run migrations,t1
+t3,Seed data,t2
+t4,Start service,t3
