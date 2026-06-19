@@ -25,7 +25,7 @@ Example 3:
 """
 
 from typing import List, Iterable
-from collections import defaultdict
+from collections import defaultdict, deque
 import pytest
 
 
@@ -57,10 +57,6 @@ def calculate_equation(
         x, y = query
         result.append(dfs(x, y, 1, set()))
     return result
-
-
-from collections import deque
-
 
 def calculate_equation_bfs(
     equations: List[List[str]], values: List[float], queries: List[List[str]]

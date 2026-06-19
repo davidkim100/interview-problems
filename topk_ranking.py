@@ -26,7 +26,7 @@ class Ranking:
         self.rankings = SortedList()  # (-score, entityId)
 
     def update(self, entityId: str, score: int):
-        if entityId in self.scores and self.scores[entityId] != None:
+        if entityId in self.scores and self.scores[entityId] is not None:
             old_score = self.scores[entityId]
 
             self.rankings.discard((-old_score, entityId))

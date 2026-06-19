@@ -13,9 +13,7 @@ Constraints:
     s may contain letters, digits, symbols, and spaces.
 """
 
-from collections import Counter
 import pytest
-
 
 def longest_substring(string: str) -> int:
     """
