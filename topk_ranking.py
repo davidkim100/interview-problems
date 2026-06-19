@@ -1,9 +1,14 @@
 """
-We have entities users, drivers, restaurants, products
-Design a top-k ranking system that can return the top-k entities with the highest scores. 
-The system should support updating the score of an entity and retrieving the top-k entities efficiently.
+Top-K Ranking
+
+Design a ranking system for entities that supports:
+    - Updating an entity's score
+    - Retrieving the top-k entities by score
+    - Removing an entity
 """
+
 from sortedcontainers import SortedList
+
 
 class Ranking:
     """
@@ -17,16 +22,16 @@ class Ranking:
     """
 
     def __init__(self):
-        self.scores = {} # key: entityId, value: score
-        self.rankings = SortedList() # (-score, entityId)
+        self.scores = {}  # key: entityId, value: score
+        self.rankings = SortedList()  # (-score, entityId)
 
     def update(self, entityId: str, score: int):
         if entityId in self.scores and self.scores[entityId] != None:
             old_score = self.scores[entityId]
 
             self.rankings.discard((-old_score, entityId))
-        
-        self.scores[entityId]=score
+
+        self.scores[entityId] = score
         self.rankings.add((-score, entityId))
 
     def topK(self, k: int) -> list[str]:
@@ -41,14 +46,18 @@ class Ranking:
             self.scores[entityId] = None
         return
 
-if __name__=="__main__":
+def test():
     ranking = Ranking()
-    ranking.update("user1", 10)
-    ranking.update("user2", 20)
-    ranking.update("user3", 15)
-    assert ranking.topK(2) == ["user2","user3"]
-    ranking.update("user1", 25)
-    assert ranking.topK(2) == ["user1","user2"]
-    ranking.remove("user2")
-    assert ranking.topK(2) == ["user1","user3"]
+    ranking.update("entity1", 10)
+    ranking.update("entity2", 20)
+    ranking.update("entity3", 15)
+    assert ranking.topK(2) == ["entity2", "entity3"]
+    ranking.update("entity1", 25)
+    assert ranking.topK(2) == ["entity1", "entity2"]
+    ranking.remove("entity2")
+    assert ranking.topK(2) == ["entity1", "entity3"]
     print("success")
+
+
+if __name__ == "__main__":
+    test()

@@ -1,23 +1,27 @@
 """
 Word Ladder
-Given two words, beginWord and endWord, and a dictionary wordList, return the length of the shortest transformation sequence from beginWord to endWord, such that:
 
-Only one letter can be changed at a time.
-Each transformed word must exist in wordList. Note that beginWord is not required to be in wordList.
+Given two words, beginWord and endWord, and a dictionary wordList, return the number of words
+in the shortest transformation sequence from beginWord to endWord, or 0 if none exists.
 
-Return the number of words in the shortest transformation sequence, or 0 if no such sequence exists.
+Rules:
+    - Only one letter can be changed at a time.
+    - Each transformed word must exist in wordList.
+    - beginWord is not required to be in wordList.
+
 Example:
-beginWord = "hit"
-endWord   = "cog"
-wordList  = ["hot", "dot", "dog", "lot", "log", "cog"]
+    beginWord = "hit"
+    endWord   = "cog"
+    wordList  = ["hot", "dot", "dog", "lot", "log", "cog"]
 
-Output: 5
-The sequence is "hit" -> "hot" -> "dot" -> "dog" -> "cog", which is 5 words long.
-Same format as before. Before writing code, give me:
+    Output: 5  ("hit" -> "hot" -> "dot" -> "dog" -> "cog")
 """
+
 from typing import List
 from collections import deque
 import string
+import pytest
+
 
 def word_ladder(beginWord: str, endWord: str, wordList: List[str]) -> int:
     """
@@ -32,7 +36,7 @@ def word_ladder(beginWord: str, endWord: str, wordList: List[str]) -> int:
     if endWord not in wordListSet:
         return 0
 
-    queue = deque([(beginWord,1)])
+    queue = deque([(beginWord, 1)])
 
     while queue:
         word, depth = queue.popleft()
@@ -41,18 +45,22 @@ def word_ladder(beginWord: str, endWord: str, wordList: List[str]) -> int:
 
         for i in range(len(word)):
             for letter in alphabet:
-                newWord = word[:i]+letter+word[i+1:]
+                newWord = word[:i] + letter + word[i + 1 :]
                 if newWord not in visited and newWord in wordListSet:
                     visited.add(newWord)
-                    queue.append((newWord,depth+1))
-    
+                    queue.append((newWord, depth + 1))
+
     return 0
 
-if __name__=="__main__":
-    TEST1=("hit","cog",["hot", "dot", "dog", "lot", "log", "cog"],5)
-    TEST2=("hit","hit",["hit"],1)
-    TEST3=("hit","pop",["pop"],0)
-    assert word_ladder(TEST1[0],TEST1[1],TEST1[2]) == TEST1[3]
-    assert word_ladder(TEST2[0],TEST2[1],TEST2[2]) == TEST2[3]
-    assert word_ladder(TEST3[0],TEST3[1],TEST3[2]) == TEST3[3]
-    print("success")
+
+@pytest.mark.parametrize("begin_word,end_word,word_list,expected", [
+    ("hit", "cog", ["hot", "dot", "dog", "lot", "log", "cog"], 5),
+    ("hit", "hit", ["hit"], 1),
+    ("hit", "pop", ["pop"], 0),
+])
+def test_word_ladder(begin_word, end_word, word_list, expected):
+    assert word_ladder(begin_word, end_word, word_list) == expected
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
