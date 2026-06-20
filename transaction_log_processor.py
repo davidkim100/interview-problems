@@ -1,57 +1,46 @@
 """
 Problem: Transaction Log Processor
-You are processing a log of payment transactions to compute what each merchant is owed. Each transaction is a record with an id, a merchant, an amount in minor units (cents), a type, and a timestamp.
-pythontransactions = [
+
+Process a log of payment transactions to compute what each merchant is owed.
+Each transaction has an id, merchant, amount in minor units (cents), type, and timestamp.
+
+transactions = [
     {"id": "tx1", "merchant": "acme",   "amount_cents": 10_000, "type": "charge",  "ts": "2026-01-10T09:00:00Z"},
     {"id": "tx2", "merchant": "acme",   "amount_cents":  2_500, "type": "refund",  "ts": "2026-01-10T11:30:00Z"},
     {"id": "tx3", "merchant": "globex", "amount_cents":  5_000, "type": "charge",  "ts": "2026-01-11T14:00:00Z"},
 ]
-Before writing code, confirm with me: Are amounts always positive integers, with type carrying the sign? Can the same merchant appear in multiple currencies? Should a refund that exceeds prior charges be allowed, or flagged? How should I represent money in the output?
-Part 1: Aggregate net volume per merchant
-Write process(transactions) that returns the net amount per merchant, where a charge adds and a refund subtracts.
-process(transactions)  ->  {"acme": 7_500, "globex": 5_000}
-Keep money as integer cents throughout. Decide how you handle an unrecognized type.
-Part 2: Calculate fees
-Stripe takes a processing fee on charges. Compute the fee as 2.9% plus 30 cents per charge, and return, per merchant, the gross volume, total fees, and the net payable (gross minus fees), with refunds reducing the payable but not generating a fee.
-process(transactions)
-    ->  {
-          "acme":   {"gross": 10_000, "fees": 320, "net": 7_180},
-          "globex": {"gross":  5_000, "fees": 175, "net": 4_825},
-        }
-# acme fee:   round(10000 * 0.029) + 30 = 290 + 30 = 320
-# acme net:   10000 - 320 - 2500 (refund) = 7180
-Be deliberate about rounding: the percentage fee must resolve to whole cents, and you should state your rounding rule. Use integer math where you can.
-Part 3: Deduplicate replayed records
-The log is produced by an at-least-once delivery system, so the same transaction can appear more than once with the same id. A duplicate id is the same economic event and must be counted only once.
-pythontransactions_with_dupes = [
-    {"id": "tx1", "merchant": "acme", "amount_cents": 10_000, "type": "charge", "ts": "2026-01-10T09:00:00Z"},
-    {"id": "tx1", "merchant": "acme", "amount_cents": 10_000, "type": "charge", "ts": "2026-01-10T09:00:05Z"},  # replay
-    {"id": "tx2", "merchant": "acme", "amount_cents":  2_500, "type": "refund", "ts": "2026-01-10T11:30:00Z"},
-]
-# tx1 must be counted once, not twice
-Extend process to dedupe by id before aggregating. Then decide: what if two records share an id but disagree on amount or merchant (a genuine conflict, not a clean replay)? Choose a policy (for example, keep the earliest by timestamp and flag the conflict) and justify it.
-Part 4: Idempotent streaming
-The real system does not hand you the full list at once; records arrive one at a time and you may be asked for the current totals at any point. Refactor into a class that ingests one record at a time, ignores ids it has already seen, and answers a balance query on demand.
-pythonprocessor = TransactionProcessor(fee_bps=290, fee_fixed_cents=30)
-processor.ingest(record)        # idempotent: a repeated id is a no-op
-processor.payable("acme")       # -> current net payable for acme
-Stretch, if time remains: bound memory. You cannot keep every id forever in a long-running stream. Discuss (or implement) an approach that still rejects recent replays without unbounded growth, for example a time-windowed set of seen ids, and name the tradeoff you are accepting.
+
+Part 1 — Net volume per merchant:
+    process(transactions) -> {"acme": {"gross": 10_000, "fees": 320, "net": 7_180},
+                              "globex": {"gross": 5_000, "fees": 175, "net": 4_825}}
+    Charges add, refunds subtract. Unrecognized types raise ValueError.
+
+Part 2 — Fees:
+    Fee per charge = round_half_up(amount * 2.9%) + 30 cents.
+    Refunds reduce net payable but do not generate a fee.
+    All arithmetic stays in integer cents.
+
+Part 3 — Dedup:
+    At-least-once delivery means duplicate IDs can appear.
+    Policy: keep the earliest record by timestamp; if a later duplicate disagrees
+    on amount/merchant/type, flag it as a conflict.
+
+Part 4 — Idempotent streaming:
+    processor = TransactionProcessor(fee_bps=290, fee_fixed_cents=30)
+    processor.ingest(record)     # idempotent: repeated id is a no-op
+    processor.payable("acme")    # current net payable for acme
+
+Stretch — Bounded memory:
+    Optional dedup_window (timedelta) evicts seen-IDs older than the window,
+    trading acceptance of very-late replays for bounded memory growth.
 """
 
 from dataclasses import dataclass
 from enum import Enum
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
+from datetime import datetime, timedelta
 import threading
 
-MERCHANT = "merchant"
-AMOUNT = "amount_cents"
-TYPE = "type"
-CHARGE = "charge"
-REFUND = "refund"
-GROSS = "gross"
-FEES = "fees"
-NET = "net"
-account_lock = threading.Lock()
 
 class TransactionType(Enum):
     CHARGE = "charge"
@@ -69,116 +58,147 @@ class Transaction:
 
 @dataclass
 class Account:
-    gross: float = 0
-    fees: float = 0
-    net: float = 0
+    gross: int = 0
+    fees: int = 0
+    net: int = 0
 
 
 class TransactionProcessor:
-    def __init__(self):
-        self.alltransactions: defaultdict[str, list[Transaction]] = defaultdict(
-            list[Transaction]
+    def __init__(self, fee_bps: int = 290, fee_fixed_cents: int = 30,
+                 dedup_window: timedelta | None = None):
+        self.fee_bps = fee_bps
+        self.fee_fixed_cents = fee_fixed_cents
+        self._seen: OrderedDict[str, Transaction] = OrderedDict()
+        self._accounts: defaultdict[str, Account] = defaultdict(Account)
+        self._lock = threading.Lock()
+        self._dedup_window = dedup_window
+        self.conflicts: list[tuple[Transaction, Transaction]] = []
+
+    @staticmethod
+    def _parse(raw: dict) -> Transaction:
+        try:
+            tx_type = TransactionType(raw["type"])
+        except ValueError:
+            raise ValueError(f"unrecognized transaction type: {raw['type']!r}")
+        return Transaction(
+            id=raw["id"],
+            merchant=raw["merchant"],
+            amount=raw["amount_cents"],
+            type=tx_type,
+            timestamp=raw["ts"],
         )
-        self.accounts: defaultdict[str, Account] = defaultdict(Account)
 
-    def payable(self, merchant: str) -> float:
-        with account_lock:
-            return self.accounts[merchant].net
+    def _calculate_fee(self, amount: int) -> int:
+        # Round-half-up on the percentage part, then add fixed per-charge fee.
+        # All integer math: amount * fee_bps is exact, +5000 biases for rounding.
+        return (amount * self.fee_bps + 5_000) // 10_000 + self.fee_fixed_cents
 
-    def _calculate_account(self, transaction: Transaction):
-        merchant = transaction.merchant
-        amount = transaction.amount
+    def _apply(self, tx: Transaction):
+        acct = self._accounts[tx.merchant]
+        if tx.type == TransactionType.CHARGE:
+            fee = self._calculate_fee(tx.amount)
+            acct.gross += tx.amount
+            acct.fees += fee
+            acct.net += tx.amount - fee
+        elif tx.type == TransactionType.REFUND:
+            acct.net -= tx.amount
 
-        fees = 0
-        net = 0
-        with account_lock:
-            if transaction.type == CHARGE:
-                self.accounts[merchant].gross += amount
-                fees = amount * 0.029 + 30
-                net = amount - fees
-            elif transaction.type == REFUND:
-                self.accounts[merchant].gross -= amount
-                net -= amount
+    def _evict_old_ids(self, current_ts: str):
+        """Bounded-memory stretch: drop seen-IDs older than the dedup window."""
+        if self._dedup_window is None:
+            return
+        cutoff = datetime.fromisoformat(current_ts) - self._dedup_window
+        while self._seen:
+            oldest_id, oldest_tx = next(iter(self._seen.items()))
+            if datetime.fromisoformat(oldest_tx.timestamp) < cutoff:
+                del self._seen[oldest_id]
+            else:
+                break
 
-            self.accounts[merchant].fees += fees
-            self.accounts[merchant].net += net
+    def _dedup(self, tx: Transaction) -> bool:
+        """Returns True if this transaction should be processed (first time seen)."""
+        self._evict_old_ids(tx.timestamp)
+        if tx.id not in self._seen:
+            self._seen[tx.id] = tx
+            return True
+        existing = self._seen[tx.id]
+        if (existing.amount != tx.amount
+                or existing.merchant != tx.merchant
+                or existing.type != tx.type):
+            self.conflicts.append((existing, tx))
+            print(f"CONFLICT: tx {tx.id} differs from earlier record; keeping earliest")
+        return False
 
-    def ingest(self, transaction_external: dict):
-        transaction = Transaction(
-            transaction_external["id"],
-            transaction_external["merchant"],
-            transaction_external["amount_cents"],
-            transaction_external["type"],
-            transaction_external["ts"],
-        )
-        if transaction.id in self.alltransactions:
-            print("transaction ID already processed")
-            return None
-        self.alltransactions[transaction.id].append(transaction)
-        self._calculate_account(transaction)
+    def ingest(self, raw: dict):
+        tx = self._parse(raw)
+        with self._lock:
+            if self._dedup(tx):
+                self._apply(tx)
 
-    def process(self, transactions_external: list[dict]) -> dict:
-        for transaction in transactions_external:
-            self.alltransactions[transaction["id"]].append(
-                Transaction(
-                    transaction["id"],
-                    transaction["merchant"],
-                    transaction["amount_cents"],
-                    transaction["type"],
-                    transaction["ts"],
-                )
-            )
+    def payable(self, merchant: str) -> int:
+        with self._lock:
+            return self._accounts[merchant].net
 
-        for transactions in self.alltransactions.items():
-            transactions[1].sort(key=lambda transaction: transaction.timestamp)
-            single_transaction = transactions[1][0]
-            self._calculate_account(single_transaction)
-
-        result = {}
-        for merchant, account in self.accounts.items():
-            result[merchant] = account.net
-        return result
+    def process(self, transactions: list[dict]) -> dict:
+        parsed = [self._parse(t) for t in transactions]
+        for tx in parsed:
+            if self._dedup(tx):
+                self._apply(tx)
+        return {
+            merchant: {"gross": acct.gross, "fees": acct.fees, "net": acct.net}
+            for merchant, acct in self._accounts.items()
+        }
 
 
 def test():
     transactions = [
-        {
-            "id": "tx1",
-            "merchant": "acme",
-            "amount_cents": 10_000,
-            "type": "charge",
-            "ts": "2026-01-10T09:00:00Z",
-        },
-        {
-            "id": "tx2",
-            "merchant": "acme",
-            "amount_cents": 2_500,
-            "type": "refund",
-            "ts": "2026-01-10T11:30:00Z",
-        },
-        {
-            "id": "tx3",
-            "merchant": "globex",
-            "amount_cents": 5_000,
-            "type": "charge",
-            "ts": "2026-01-11T14:00:00Z",
-        },
-        {
-            "id": "tx1",
-            "merchant": "acme",
-            "amount_cents": 80_000,
-            "type": "charge",
-            "ts": "2026-01-10T09:01:00Z",
-        },
+        {"id": "tx1", "merchant": "acme", "amount_cents": 10_000, "type": "charge", "ts": "2026-01-10T09:00:00Z"},
+        {"id": "tx2", "merchant": "acme", "amount_cents": 2_500, "type": "refund", "ts": "2026-01-10T11:30:00Z"},
+        {"id": "tx3", "merchant": "globex", "amount_cents": 5_000, "type": "charge", "ts": "2026-01-11T14:00:00Z"},
     ]
-    tp1 = TransactionProcessor()
-    result = tp1.process(transactions)
-    print(result)
+    tp = TransactionProcessor()
+    result = tp.process(transactions)
+    assert result == {
+        "acme": {"gross": 10_000, "fees": 320, "net": 7_180},
+        "globex": {"gross": 5_000, "fees": 175, "net": 4_825},
+    }, f"Part 2 failed: {result}"
+    print(f"Part 2 OK: {result}")
+
+    transactions_with_dupes = [
+        {"id": "tx1", "merchant": "acme", "amount_cents": 10_000, "type": "charge", "ts": "2026-01-10T09:00:00Z"},
+        {"id": "tx1", "merchant": "acme", "amount_cents": 10_000, "type": "charge", "ts": "2026-01-10T09:00:05Z"},
+        {"id": "tx2", "merchant": "acme", "amount_cents": 2_500, "type": "refund", "ts": "2026-01-10T11:30:00Z"},
+        {"id": "tx3", "merchant": "globex", "amount_cents": 5_000, "type": "charge", "ts": "2026-01-11T14:00:00Z"},
+    ]
     tp2 = TransactionProcessor()
-    for trans in transactions:
-        tp2.ingest(trans)
-        print(f'acme account payable: {tp2.payable("acme")}')
-        print(f'globex account payable: {tp2.payable("globex")}')
+    result2 = tp2.process(transactions_with_dupes)
+    assert result2 == result, f"Part 3 dedup failed: {result2}"
+    print(f"Part 3 dedup OK: {result2}")
+
+    transactions_with_conflict = [
+        {"id": "tx1", "merchant": "acme", "amount_cents": 10_000, "type": "charge", "ts": "2026-01-10T09:00:00Z"},
+        {"id": "tx1", "merchant": "acme", "amount_cents": 80_000, "type": "charge", "ts": "2026-01-10T09:01:00Z"},
+    ]
+    tp3 = TransactionProcessor()
+    tp3.process(transactions_with_conflict)
+    assert len(tp3.conflicts) == 1, f"Conflict detection failed: {tp3.conflicts}"
+    print(f"Part 3 conflict OK: {tp3.conflicts[0][0].amount} vs {tp3.conflicts[0][1].amount}")
+
+    tp4 = TransactionProcessor(fee_bps=290, fee_fixed_cents=30)
+    for raw in transactions:
+        tp4.ingest(raw)
+    assert tp4.payable("acme") == 7_180, f"Part 4 acme failed: {tp4.payable('acme')}"
+    assert tp4.payable("globex") == 4_825, f"Part 4 globex failed: {tp4.payable('globex')}"
+    print(f"Part 4 streaming OK: acme={tp4.payable('acme')}, globex={tp4.payable('globex')}")
+
+    tp5 = TransactionProcessor()
+    tp5.ingest({"id": "tx1", "merchant": "acme", "amount_cents": 10_000, "type": "charge", "ts": "2026-01-10T09:00:00Z"})
+    tp5.ingest({"id": "tx1", "merchant": "acme", "amount_cents": 10_000, "type": "charge", "ts": "2026-01-10T09:00:05Z"})
+    assert tp5.payable("acme") == 9_680, f"Part 4 idempotent failed: {tp5.payable('acme')}"
+    print(f"Part 4 idempotent OK: acme={tp5.payable('acme')}")
+
+    print("\nAll tests passed.")
+
 
 if __name__ == "__main__":
     test()
