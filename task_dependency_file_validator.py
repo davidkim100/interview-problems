@@ -109,7 +109,7 @@ def validate(csv_text: str) -> list[str]:
             in_degree[dependent] -= 1
             if in_degree[dependent] == 0:
                 queue.append(dependent)
-
+    print(order)
     return order
 
 
