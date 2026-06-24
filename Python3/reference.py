@@ -154,7 +154,9 @@ class Charge:
 
     def transition(self, target: ChargeState) -> None:
         if target not in _ALLOWED[self.state]:
-            raise ValidationError(f"illegal transition {self.state.value} -> {target.value}")
+            raise ValidationError(
+                f"illegal transition {self.state.value} -> {target.value}"
+            )
         self.state = target
         self.history.append(target)
 
@@ -285,7 +287,9 @@ def has_cycle(graph: dict[str, list[str]]) -> bool:
     return any(dfs(n) for n in list(graph) if n not in visited)
 
 
-def convert_currency(rates: dict[tuple[str, str], float], src: str, dst: str) -> Optional[float]:
+def convert_currency(
+    rates: dict[tuple[str, str], float], src: str, dst: str
+) -> Optional[float]:
     """The Evaluate Division / currency conversion pattern: a weighted graph
     where BFS accumulates the product of edge rates along a path. Returns the
     conversion factor from src to dst, or None if unreachable.
@@ -334,8 +338,7 @@ def top_k_frequent(items: Iterable[str], k: int) -> list[str]:
 
 class FeeStrategy(ABC):
     @abstractmethod
-    def fee_cents(self, amount_cents: int) -> int:
-        ...
+    def fee_cents(self, amount_cents: int) -> int: ...
 
 
 class FlatFee(FeeStrategy):
@@ -396,7 +399,9 @@ class IdempotencyCache:
 class TokenBucket:
     """Allows up to `capacity` requests, refilling at `refill_per_sec`."""
 
-    def __init__(self, capacity: float, refill_per_sec: float, clock: Clock = time.monotonic) -> None:
+    def __init__(
+        self, capacity: float, refill_per_sec: float, clock: Clock = time.monotonic
+    ) -> None:
         self.capacity = capacity
         self.refill_per_sec = refill_per_sec
         self.clock = clock
@@ -445,6 +450,7 @@ class SafeCounter:
 
 def hammer(counter, threads: int, per_thread: int) -> int:
     """Run `threads` workers, each calling increment() `per_thread` times."""
+
     def worker() -> None:
         for _ in range(per_thread):
             counter.increment()
@@ -463,7 +469,9 @@ def hammer(counter, threads: int, per_thread: int) -> int:
 # integration round prefer `requests` if it is available.
 
 
-def retry(times: int, base_delay: float = 0.5, sleep: Callable[[float], None] = time.sleep):
+def retry(
+    times: int, base_delay: float = 0.5, sleep: Callable[[float], None] = time.sleep
+):
     """Decorator that retries on exception with exponential backoff.
     `sleep` is injectable so tests run instantly."""
 
@@ -477,7 +485,7 @@ def retry(times: int, base_delay: float = 0.5, sleep: Callable[[float], None] = 
                 except Exception as exc:  # noqa: BLE001
                     last_exc = exc
                     if attempt < times - 1:
-                        sleep(base_delay * (2 ** attempt))
+                        sleep(base_delay * (2**attempt))
             assert last_exc is not None
             raise last_exc
 
@@ -497,7 +505,9 @@ def http_get_json(url: str, timeout: float = 5.0) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def paginate(fetch_page: Callable[[int], list], max_pages: int = 100) -> Iterator[object]:
+def paginate(
+    fetch_page: Callable[[int], list], max_pages: int = 100
+) -> Iterator[object]:
     """Generator that yields items across pages until a page is empty.
     A generator streams results lazily instead of buffering everything."""
     for page in range(max_pages):
@@ -583,7 +593,9 @@ def _demo() -> None:
     graph = build_adjacency([("a", "b"), ("b", "c"), ("c", "a")])
     print("Has cycle:", has_cycle(graph))
 
-    print("Fees on $100:", total_fees(10_000, [FlatFee(30), PercentageFee(290)]), "cents")
+    print(
+        "Fees on $100:", total_fees(10_000, [FlatFee(30), PercentageFee(290)]), "cents"
+    )
 
     unsafe = hammer(UnsafeCounter(), threads=8, per_thread=2_000)
     safe = hammer(SafeCounter(), threads=8, per_thread=2_000)
