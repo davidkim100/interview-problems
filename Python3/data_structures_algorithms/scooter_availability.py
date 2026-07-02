@@ -20,12 +20,13 @@ class ScooterAvailability:
     def getAvailableScooters(self, userLat: int, userLong: int, maxNum: int):
         scooter_distances = []
         for scooter in self._scooters:
-            dist = abs(userLat-scooter.latitude)^2 + abs(userLong-scooter.longitude)^2
+            dist = abs(userLat-scooter.latitude)**2 + abs(userLong-scooter.longitude)**2
             heapq.heappush(scooter_distances, (dist, scooter.scooterId))
-        
+
         result = []
-        while scooter_distances and len(result) <= maxNum:
+        while scooter_distances and len(result) < maxNum:
             result.append(heapq.heappop(scooter_distances)[1])
+
         return result
 
 if __name__=="__main__":
